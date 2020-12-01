@@ -118,7 +118,7 @@ contract DigitalaxMarketplace is Context, ReentrancyGuard {
         require(address(_accessControls) != address(0), "DigitalaxMarketplace: Invalid Access Controls");
         require(address(_garmentNft) != address(0), "DigitalaxMarketplace: Invalid NFT");
         require(_platformFeeRecipient != address(0), "DigitalaxMarketplace: Invalid Platform Fee Recipient");
-        require(_monaErc20Token != address(0), "DigitalaxMarketplace: Invalid ERC20");
+        require(_monaErc20Token != address(0), "DigitalaxMarketplace: Invalid ERC20 Token");
 
         accessControls = _accessControls;
         garmentNft = _garmentNft;
@@ -176,7 +176,7 @@ contract DigitalaxMarketplace is Context, ReentrancyGuard {
 
         require(
             garmentNft.isApproved(_garmentTokenId, address(this)),
-            "DigitalaxAuction.createOfferOnBehalfOfOwner: Cannot create an offer if you do not have approval"
+            "DigitalaxMarketplace.createOfferOnBehalfOfOwner: Cannot create an offer if you do not have approval"
         );
 
         uint256 startTimestamp = _getNow();
@@ -192,6 +192,7 @@ contract DigitalaxMarketplace is Context, ReentrancyGuard {
 
     /**
      @notice Buys an open offer with eth and/or erc20
+     @dev Only callable when the offer is open
      @dev Only callable when the offer is open
      @dev Bids from smart contracts are prohibited
      @param _garmentTokenId Token ID of the garment being offered
@@ -248,14 +249,14 @@ contract DigitalaxMarketplace is Context, ReentrancyGuard {
             // Check that there is enough ERC20 to cover the rest of the value (minus the discount already taken)
             require(IERC20(monaErc20Token).allowance(msg.sender, address(this)) >= amountOfErc20ToTransfer, "DigitalaxMarketplace.buyOffer: Failed to supply ERC20 Allowance");
 
-            // Result of the offer
-            offers[_garmentTokenId].resulted = true;
-
             // TODO Do a ERC20 token swap to get some eth back from the erc20 to cover the cost
 
         } else {
             require(msg.value >= offer.primarySalePrice, "DigitalaxMarketplace.buyOffer: Failed to supply funds");
         }
+
+        // Result of the offer
+        offers[_garmentTokenId].resulted = true;
 
         // Transfer the funds
         // Send platform fee in ETH to the platform fee recipient, there is a discount that is subtracted from this
@@ -333,8 +334,8 @@ contract DigitalaxMarketplace is Context, ReentrancyGuard {
      @param _marketplaceInitialFee New marketplace initial fee
      */
     function updateMarketplaceInitialPlatformFee(uint256 _marketplaceInitialFee) external {
-        require(accessControls.hasAdminRole(_msgSender()), "DigitalaxMarketplace.updateMarketplaceInitialFee: Sender must be admin");
-        require(_marketplaceInitialFee > discountToPayERC20, "DigitalaxMarketplace.updateMarketplaceDiscountToPayInErc20: Discount cannot be greater then fee");
+        require(accessControls.hasAdminRole(_msgSender()), "DigitalaxMarketplace.updateMarketplaceInitialPlatformFee: Sender must be admin");
+        require(_marketplaceInitialFee > discountToPayERC20, "DigitalaxMarketplace.updateMarketplaceInitialPlatformFee: Discount cannot be greater then fee");
         initialPlatformFee = _marketplaceInitialFee;
         emit UpdateMarketplaceInitialPlatformFee(_marketplaceInitialFee);
     }
@@ -345,10 +346,21 @@ contract DigitalaxMarketplace is Context, ReentrancyGuard {
      @param _marketplaceRegularFee New marketplace regular fee
      */
     function updateMarketplaceRegularPlatformFee(uint256 _marketplaceRegularFee) external {
-        require(accessControls.hasAdminRole(_msgSender()), "DigitalaxMarketplace.updateMarketplaceRegularFee: Sender must be admin");
-        require(_marketplaceRegularFee > discountToPayERC20, "DigitalaxMarketplace.updateMarketplaceDiscountToPayInErc20: Discount cannot be greater then fee");
+        require(accessControls.hasAdminRole(_msgSender()), "DigitalaxMarketplace.updateMarketplaceRegularPlatformFee: Sender must be admin");
+        require(_marketplaceRegularFee > discountToPayERC20, "DigitalaxMarketplace.updateMarketplaceRegularPlatformFee: Discount cannot be greater then fee");
         regularPlatformFee = _marketplaceRegularFee;
         emit UpdateMarketplaceRegularPlatformFee(_marketplaceRegularFee);
+    }
+
+    /**
+     @notice Update the marketplace sale duration
+     @dev Only admin
+     @param _expiryDuration New marketplace sale duration
+     */
+    function updateMarketplaceExpiryDuration(uint256 _expiryDuration) external {
+        require(accessControls.hasAdminRole(_msgSender()), "DigitalaxMarketplace.updateMarketplaceExpiryDuration: Sender must be admin");
+        expiryDuration = _expiryDuration;
+        emit UpdateMarketplaceExpiryDuration(_expiryDuration);
     }
 
     /**
@@ -359,7 +371,7 @@ contract DigitalaxMarketplace is Context, ReentrancyGuard {
     function updateAccessControls(DigitalaxAccessControls _accessControls) external {
         require(
             accessControls.hasAdminRole(_msgSender()),
-            "DigitalaxAuction.updateAccessControls: Sender must be admin"
+            "DigitalaxMarketplace.updateAccessControls: Sender must be admin"
         );
 
         require(address(_accessControls) != address(0), "DigitalaxMarketplace.updateAccessControls: Zero Address");
