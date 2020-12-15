@@ -12,6 +12,6 @@ contract MarketplaceBuyingContractMock {
     }
 
     function buyOfferWithEth(uint256 _garmentTokenId) external payable {
-        marketplaceContract.buyOffer{value: msg.value}(_garmentTokenId, 0);
+        marketplaceContract.buyOffer{value: msg.value}(_garmentTokenId, false);
     }
 }

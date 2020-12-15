@@ -10,10 +10,13 @@ contract DigitalaxMarketplaceMock is DigitalaxMarketplace {
     constructor(
         DigitalaxAccessControls _accessControls,
         IDigitalaxGarmentNFT _garmentNft,
+        DigitalaxSwapMaker _swapMaker,
+        UniswapPairOracle_MONA_WETH _oracle,
         address payable _platformReserveAddress,
-        address _monaErc20Token
+        address _monaErc20Token,
+        address _weth
     )
-    DigitalaxMarketplace(_accessControls, _garmentNft, _platformReserveAddress, _monaErc20Token)
+    DigitalaxMarketplace(_accessControls, _garmentNft, _swapMaker, _oracle, _platformReserveAddress, _monaErc20Token, _weth)
     public {}
 
     function setNowOverride(uint256 _now) external {

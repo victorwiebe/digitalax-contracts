@@ -16,9 +16,17 @@ const DigitalaxMarketplace = artifacts.require('DigitalaxMarketplaceMock');
 const DigitalaxMarketplaceReal = artifacts.require('DigitalaxMarketplace');
 const MockERC20 = artifacts.require('MockERC20');
 const MarketplaceBuyingContractMock = artifacts.require('MarketplaceBuyingContractMock');
+const DigitalaxSwapMaker = artifacts.require('DigitalaxSwapMaker');
+const UniswapPairOracle_MONA_WETH = artifacts.require('UniswapPairOracle_MONA_WETH');
+const UniswapV2Router02 = artifacts.require('UniswapV2Router02');
+const UniswapV2Factory = artifacts.require('UniswapV2Factory');
+const UniswapV2Pair = artifacts.require('UniswapV2Pair');
+const WethToken = artifacts.require('WethToken');
 
 // 1,000 * 10 ** 18
 const ONE_THOUSAND_TOKENS = '1000000000000000000000';
+const TWO_HUNDRED_TOKENS = new BN('200000000000000000000');
+const TWENTY_TOKENS = new BN('20000000000000000000');
 
 contract('DigitalaxMarketplace', (accounts) => {
   const [admin, smartContract, platformFeeAddress, minter, owner, designer, tokenBuyer, newRecipient] = accounts;
@@ -53,11 +61,47 @@ contract('DigitalaxMarketplace', (accounts) => {
       {from: admin}
     );
 
+    this.factory = await UniswapV2Factory.new(
+      owner, 
+      { from: owner }
+    );
+
+    this.weth = await WethToken.new(
+      { from: minter }
+    );
+
+    this.monaWETH = await UniswapV2Pair.at(
+        (await this.factory.createPair(this.monaToken.address, this.weth.address)).logs[0].args.pair
+    );
+    await this.weth.transfer(this.monaWETH.address, TWENTY_TOKENS, { from: minter });
+    await this.monaToken.transfer(this.monaWETH.address, TWO_HUNDRED_TOKENS, { from: tokenBuyer });
+    await this.monaWETH.mint(minter);
+
+    this.router02 = await UniswapV2Router02.new(
+      this.factory.address,
+      this.weth.address
+    );
+
+    this.oracle = await UniswapPairOracle_MONA_WETH.new(
+      this.factory.address,
+      this.monaToken.address,
+      this.weth.address
+    );
+
+    this.swapMaker = await DigitalaxSwapMaker.new(
+      this.router02.address,
+      this.monaToken.address,
+      this.weth.address
+    );
+
     this.marketplace = await DigitalaxMarketplace.new(
       this.accessControls.address,
       this.token.address,
+      this.swapMaker.address,
+      this.oracle.address,
       platformFeeAddress,
       this.monaToken.address,
+      this.weth.address,
       {from: admin}
     );
 
@@ -72,8 +116,11 @@ contract('DigitalaxMarketplace', (accounts) => {
         DigitalaxMarketplace.new(
           constants.ZERO_ADDRESS,
           this.token.address,
+          this.swapMaker.address,
+          this.oracle.address,
           platformFeeAddress,
-            this.monaToken.address,
+          this.monaToken.address,
+          this.weth.address,
           {from: admin}
         ),
         "DigitalaxMarketplace: Invalid Access Controls"
@@ -85,11 +132,30 @@ contract('DigitalaxMarketplace', (accounts) => {
         DigitalaxMarketplace.new(
           this.accessControls.address,
           constants.ZERO_ADDRESS,
+          this.swapMaker.address,
+          this.oracle.address,
           platformFeeAddress,
-            this.monaToken.address,
+          this.monaToken.address,
+          this.weth.address,
           {from: admin}
         ),
         "DigitalaxMarketplace: Invalid NFT"
+      );
+    });
+
+    it('Reverts when swap maker contract address is zero', async () => {
+      await expectRevert(
+        DigitalaxMarketplace.new(
+          this.accessControls.address,
+          this.token.address,
+          constants.ZERO_ADDRESS,
+          this.oracle.address,
+          platformFeeAddress,
+          this.monaToken.address,
+          this.weth.address,
+          {from: admin}
+        ),
+        "DigitalaxMarketplace: Invalid Swap Maker"
       );
     });
 
@@ -98,25 +164,33 @@ contract('DigitalaxMarketplace', (accounts) => {
         DigitalaxMarketplace.new(
           this.accessControls.address,
           this.token.address,
+          this.swapMaker.address,
+          this.oracle.address,
           constants.ZERO_ADDRESS,
           this.monaToken.address,
+          this.weth.address,
           {from: admin}
         ),
         "DigitalaxMarketplace: Invalid Platform Fee Recipient"
       );
     });
+
     it('Reverts when mona token address is zero', async () => {
       await expectRevert(
         DigitalaxMarketplace.new(
           this.accessControls.address,
           this.token.address,
+          this.swapMaker.address,
+          this.oracle.address,
           platformFeeAddress,
           constants.ZERO_ADDRESS,
+          this.weth.address,
           {from: admin}
         ),
         "DigitalaxMarketplace: Invalid ERC20 Token"
       );
     });
+    
   });
 
   describe('Admin functions', () => {
@@ -165,7 +239,7 @@ contract('DigitalaxMarketplace', (accounts) => {
         );
       });
       it('fails when less than the discount', async () => {
-        const discount = await this.marketplace.discountToPayERC20();
+        const discount = await this.marketplace.discountToPayERC20();0
         expect(discount).to.be.bignumber.equal('20');
         await expectRevert(
           this.marketplace.updateMarketplaceRegularPlatformFee(10, {from: admin}),
@@ -371,8 +445,11 @@ contract('DigitalaxMarketplace', (accounts) => {
         const marketplace = await DigitalaxMarketplaceReal.new(
           this.accessControls.address,
           this.token.address,
+          this.swapMaker.address,
+          this.oracle.address,
           platformFeeAddress,
-            this.monaToken.address,
+          this.monaToken.address,
+          this.weth.address,
           {from: admin}
         );
 
@@ -386,61 +463,79 @@ contract('DigitalaxMarketplace', (accounts) => {
     });
   });
 
-  // TODO
-  // describe('createAuctionOnBehalfOfOwner()', () => {
-  //   beforeEach(async () => {
-  //     await this.marketplace.setNowOverride('2');
-  //     await this.token.mint(minter, randomTokenURI, designer, {from: minter});
-  //   });
-  //
-  //   describe('validation', () => {
-  //     it('fails when sender does not have admin or smart contract role', async () => {
-  //       await expectRevert(
-  //         this.marketplace.createAuctionOnBehalfOfOwner(TOKEN_ONE_ID, "0", "0", "10", {from: tokenBuyer}),
-  //         "DigitalaxMarketplace.createAuctionOnBehalfOfOwner: Sender must have admin or smart contract role"
-  //       );
-  //     });
-  //
-  //     it('fails when marketplace does not have approval for garment', async () => {
-  //       await expectRevert(
-  //         this.marketplace.createAuctionOnBehalfOfOwner(TOKEN_ONE_ID, "0", "0", "10", {from: admin}),
-  //         "DigitalaxMarketplace.createAuctionOnBehalfOfOwner: Cannot create an marketplace if you do not have approval"
-  //       );
-  //     });
-  //   });
-  //
-  //   describe('successful creation', () => {
-  //     beforeEach(async () => {
-  //       await this.token.approve(this.marketplace.address, TOKEN_ONE_ID, {from: minter});
-  //     });
-  //
-  //     const createAuctionOnBehalfOfOwnerGivenSenderIs = async (sender) => {
-  //       const {receipt} = await this.marketplace.createAuctionOnBehalfOfOwner(TOKEN_ONE_ID, "0", "0", "10", {from: sender});
-  //
-  //       await expectEvent(receipt, 'AuctionCreated', {
-  //         garmentTokenId: TOKEN_ONE_ID
-  //       });
-  //
-  //       const {_reservePrice, _startTime, _endTime, _resulted} = await this.marketplace.getAuction(TOKEN_ONE_ID);
-  //       expect(_reservePrice).to.be.bignumber.equal('0');
-  //       expect(_startTime).to.be.bignumber.equal('0');
-  //       expect(_endTime).to.be.bignumber.equal('10');
-  //       expect(_resulted).to.be.equal(false);
-  //
-  //       const owner = await this.token.ownerOf(TOKEN_ONE_ID);
-  //       expect(owner).to.be.equal(minter);
-  //     };
-  //
-  //     it('succeeds with admin role', async () => {
-  //       await createAuctionOnBehalfOfOwnerGivenSenderIs(admin);
-  //     });
-  //
-  //
-  //     it('succeeds with smart contract role', async () => {
-  //       await createAuctionOnBehalfOfOwnerGivenSenderIs(smartContract);
-  //     });
-  //   });
-  // });
+  describe('createOfferOnBehalfOfOwner()', async () => {
+
+    describe('validation', async () => {
+      beforeEach(async () => {
+        await this.token.mint(minter, randomTokenURI, designer, {from: minter});
+        await this.token.approve(this.marketplace.address, TOKEN_ONE_ID, {from: minter});
+      });
+
+
+      it('fails if token already has marketplace in play', async () => {
+        await this.marketplace.setNowOverride('2');
+        await this.marketplace.createOfferOnBehalfOfOwner(TOKEN_ONE_ID, ether('0.1'), {from: admin});
+
+        await expectRevert(
+          this.marketplace.createOfferOnBehalfOfOwner(TOKEN_ONE_ID,  ether('0.1'), {from: admin}),
+          'DigitalaxMarketplace.createOffer: Cannot duplicate current offer'
+        );
+      });
+
+      it('fails if you are not admin or smart contract', async () => {
+        await this.marketplace.setNowOverride('2');
+        await this.token.mint(tokenBuyer, randomTokenURI, designer, {from: minter});
+
+        await expectRevert(
+          this.marketplace.createOfferOnBehalfOfOwner(TOKEN_ONE_ID, ether('0.1'), {from: minter}),
+          'DigitalaxMarketplace.createOfferOnBehalfOfOwner: Sender must have admin or smart contract role'
+        );
+      });
+
+      it('fails if token does not exist', async () => {
+        await this.marketplace.setNowOverride('10');
+
+        await expectRevert(
+          this.marketplace.createOfferOnBehalfOfOwner('99', ether('0.1'), {from: admin}),
+          'ERC721: owner query for nonexistent token'
+        );
+      });
+    });
+
+    describe('successful creation', async () => {
+      it('Token retains in the ownership of the marketplace creator', async () => {
+        await this.marketplace.setNowOverride('2');
+        await this.token.mint(minter, randomTokenURI, designer, {from: minter});
+        await this.token.approve(this.marketplace.address, TOKEN_ONE_ID, {from: minter});
+        await this.marketplace.createOfferOnBehalfOfOwner(TOKEN_ONE_ID, ether('0.1'), {from: admin});
+
+        const owner = await this.token.ownerOf(TOKEN_ONE_ID);
+        expect(owner).to.be.equal(minter);
+      });
+    });
+
+    describe('creating using real contract (not mock)', () => {
+      it('can successfully create', async () => {
+        const marketplace = await DigitalaxMarketplaceReal.new(
+          this.accessControls.address,
+          this.token.address,
+          this.swapMaker.address,
+          this.oracle.address,
+          platformFeeAddress,
+          this.monaToken.address,
+          this.weth.address,
+          {from: admin}
+        );
+
+        await this.token.mint(minter, randomTokenURI, designer, {from: minter});
+        await this.token.approve(marketplace.address, TOKEN_ONE_ID, {from: minter});
+        await marketplace.createOfferOnBehalfOfOwner(TOKEN_ONE_ID, ether('0.1'), {from: admin});
+
+        const owner = await this.token.ownerOf(TOKEN_ONE_ID);
+        expect(owner).to.be.equal(minter);
+      });
+    });
+  });
 
   describe('buyOffer()', async () => {
 
@@ -460,23 +555,19 @@ contract('DigitalaxMarketplace', (accounts) => {
         );
       });
 
-      // TODO
-      // it('will revert if sender is smart contract', async () => {
-      //   this.biddingContract = await MarketplaceBuyingContractMock.new(this.accessControls.address,
-      //       this.token.address,
-      //       platformFeeAddress,
-      //       this.monaToken.address,
-      //       {from: admin});
-      //   await expectRevert(
-      //     this.biddingContract.buyOffer(TOKEN_ONE_ID, 0, {from: tokenBuyer, value: ether('0.1')}),
-      //     "DigitalaxMarketplace.buyOffer: No contracts permitted"
-      //   );
-      // });
+      it('will revert if sender is smart contract', async () => {
+        this.biddingContract = await MarketplaceBuyingContractMock.new(this.marketplace.address,
+            {from: admin});
+        await expectRevert(
+          this.biddingContract.buyOfferWithEth(TOKEN_ONE_ID, {from: tokenBuyer, value: ether('0.1')}),
+          "DigitalaxMarketplace.buyOffer: No contracts permitted"
+        );
+      });
 
       it('will fail when contract is paused', async () => {
         await this.marketplace.toggleIsPaused({from: admin});
         await expectRevert(
-          this.marketplace.buyOffer(TOKEN_ONE_ID, 0, {from: tokenBuyer, value: ether('1.0')}),
+          this.marketplace.buyOffer(TOKEN_ONE_ID, false, {from: tokenBuyer, value: ether('1.0')}),
           "Function is currently paused"
         );
       });
@@ -497,7 +588,7 @@ contract('DigitalaxMarketplace', (accounts) => {
 
       it('buys the offer', async () => {
         await this.marketplace.setNowOverride('2');
-        await this.marketplace.buyOffer(TOKEN_ONE_ID, 0, {from: tokenBuyer, value: ether('0.1')});
+        await this.marketplace.buyOffer(TOKEN_ONE_ID, false, {from: tokenBuyer, value: ether('0.1')});
 
         const {_primarySalePrice, _startTime, _endTime, _resulted} = await this.marketplace.getOffer(TOKEN_ONE_ID);
         expect(_primarySalePrice).to.be.bignumber.equal(ether('0.1'));
@@ -506,35 +597,59 @@ contract('DigitalaxMarketplace', (accounts) => {
         expect(_resulted).to.be.equal(true);
       });
 
-      // TODO
-      // it('transfer funds to the token creator and platform', async () => {
-      //   await this.marketplace.buyOffer(TOKEN_ONE_ID, 0, {from: tokenBuyer, value: ether('0.1')});
-      //   await this.marketplace.setNowOverride('12');
-      //
-      //   const platformFeeTracker = await balance.tracker(platformFeeAddress);
-      //   const designerTracker = await balance.tracker(designer);
-      //
-      //   // Platform gets 12%
-      //   const platformChanges = await platformFeeTracker.delta('wei');
-      //   expect(platformChanges).to.be.bignumber.equal(
-      //     (ether('0.4').sub(ether('0.1'))) // total minus reserve
-      //       .div(new BN('1000'))
-      //       .mul(new BN('120')) // only 12% of total
-      //   );
-      //
-      //   // Remaining funds sent to designer on completion
-      //   const changes = await designerTracker.delta('wei');
-      //   expect(changes).to.be.bignumber.equal(
-      //     ether('0.4').sub(platformChanges)
-      //   );
-      // });
+      it('transfer funds to the token creator and platform', async () => {
+        const platformFeeTracker = await balance.tracker(platformFeeAddress);
+        const designerTracker = await balance.tracker(designer);
+        
+        await this.marketplace.buyOffer(TOKEN_ONE_ID, false, {from: tokenBuyer, value: ether('0.1')});
+        await this.marketplace.setNowOverride('12');
+        // Platform gets 12%
+        const platformChanges = await platformFeeTracker.delta('wei');
+        expect(platformChanges).to.be.bignumber.equal(
+          (ether('0.1')) // total minus reserve
+            .div(new BN('1000'))
+            .mul(new BN('120')) // only 12% of total
+        );
+      
+        // Remaining funds sent to designer on completion
+        const changes = await designerTracker.delta('wei');
+        expect(changes).to.be.bignumber.equal(
+          ether('0.1').sub(platformChanges)
+        );
+      });
 
       it('records primary sale price on garment NFT', async () => {
-        await this.marketplace.buyOffer(TOKEN_ONE_ID, 0, {from: tokenBuyer, value: ether('0.4')});
+        await this.marketplace.buyOffer(TOKEN_ONE_ID, false, {from: tokenBuyer, value: ether('0.4')});
         await this.marketplace.setNowOverride('12');
 
         const primarySalePrice = await this.token.primarySalePrice(TOKEN_ONE_ID);
         expect(primarySalePrice).to.be.bignumber.equal(ether('0.1'));
+      });
+
+      it('transfer Mona only to the token creator and platform', async () => {
+        const platformFeeTracker = await balance.tracker(platformFeeAddress);
+        const designerTracker = await balance.tracker(designer);
+        await this.weth.deposit({from: tokenBuyer, value: ether('20')})
+        await this.monaToken.approve(this.marketplace.address, TWO_HUNDRED_TOKENS, {from: tokenBuyer});
+
+        await this.marketplace.buyOffer(TOKEN_ONE_ID, true, {from: tokenBuyer});
+        await this.marketplace.setNowOverride('12');
+
+        // Platform gets 12%
+        const platformChanges = await platformFeeTracker.delta('wei');
+        expect(platformChanges).to.be.bignumber.equal(ether('0')); // But no change in eth
+
+
+        const designerChanges = await designerTracker.delta('wei');
+        expect(designerChanges).to.be.bignumber.equal(ether('0')); // But no change in eth
+
+        // Validate that the garment owner/designer received FEE * (100% minus platformFEE of 12%)
+        expect(await this.monaToken.balanceOf(designer)).to.be.bignumber.equal(new BN('880000000000000000'));
+
+        // Validate that the treasury wallet (platformFeeRecipient) received platformFee minus discount for paying in Mona
+        // (so 12-2, is 10% of final fee is given to the platform recipient)
+        expect(await this.monaToken.balanceOf(platformFeeAddress)).to.be.bignumber.equal(new BN('100000000000000000'));
+
       });
     });
   });
